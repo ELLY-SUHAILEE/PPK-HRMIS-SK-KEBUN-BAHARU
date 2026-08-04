@@ -16,8 +16,8 @@ function handleFile(e) {
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
         
-        // Baca data dari baris ke-6 (Header bermula di Row 5/6 Excel)
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { range: 4 });
+        // Baca data dari baris ke-6 (Range 5 = Row index 5)
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { range: 5 });
 
         processHRMISData(jsonData);
     };
@@ -31,32 +31,38 @@ function processHRMISData(data) {
     let akpTotal = 0, akpAchieved = 0, akpNotAchieved = 0;
 
     data.forEach(row => {
-        // Ambil data dari lajur spesifik Excel anda
-        const rawNameKp = row['NO. KP / NAMA'] || row['NAMA'] || '';
+        // Cari nama/IC dan kategori dari pelbagai kemungkinan tajuk lajur SheetJS
+        const rawNameKp = row['NO. KP / NAMA'] || row['NO. KP/NAMA'] || row['NAMA'] || '';
         const categoryRaw = (row['KATEGORI'] || '').toString().trim().toUpperCase();
+
+        // Mengendalikan pautan nama lajur JUMLAH JAM (.1, _1, dsb.)
+        let hours = null;
         
-        // Dapatkan Nilai Jam
-        let hours = 0;
-        if (row['JUMLAH JAM_1'] !== undefined) {
-            hours = parseFloat(row['JUMLAH JAM_1']);
-        } else if (row['JUMLAH JAM'] !== undefined) {
-            if (typeof row['JUMLAH JAM'] === 'number') {
-                hours = row['JUMLAH JAM'];
-            } else {
-                // Asingkan nombor daripada teks "178 jam 54 minit"
-                const match = row['JUMLAH JAM'].toString().match(/(\d+)\s*jam/i);
-                hours = match ? parseFloat(match[1]) : parseFloat(row['JUMLAH JAM']) || 0;
+        // Cari lajur yang mengandungi nilai jam
+        Object.keys(row).forEach(key => {
+            if (key.includes('JUMLAH JAM')) {
+                const val = row[key];
+                if (typeof val === 'number') {
+                    hours = val;
+                } else if (typeof val === 'string' && val.includes('jam')) {
+                    const match = val.match(/(\d+)\s*jam/i);
+                    if (match && hours === null) {
+                        hours = parseFloat(match[1]);
+                    }
+                }
             }
-        }
+        });
 
-        // Jika tiada nama atau data kosong, abaikan
-        if (!rawNameKp || rawNameKp.toString().includes('LAPORAN')) return;
+        if (hours === null) hours = 0;
 
-        // Asingkan No. KP dan Nama daripada "921022035658 /\nCHE SITI NOR..."
-        let name = rawNameKp;
+        // Pastikan baris mempunyai Nama/KP yang sah (Abaikan baris kosong/header)
+        if (!rawNameKp || rawNameKp.toString().includes('LAPORAN') || rawNameKp.toString().trim() === '') return;
+
+        // Extract No. KP dan Nama daripada format "921022035658 /\nCHE SITI NOR..."
+        let name = rawNameKp.toString();
         let ic = '-';
-        if (rawNameKp.includes('/')) {
-            const parts = rawNameKp.split('/');
+        if (name.includes('/')) {
+            const parts = name.split('/');
             ic = parts[0].trim();
             name = parts[1].replace(/\n/g, ' ').trim();
         }
@@ -78,17 +84,17 @@ function processHRMISData(data) {
             ic: ic,
             name: name,
             category: category,
-            hours: isNaN(hours) ? 0 : hours,
+            hours: hours,
             isAchieved: isAchieved
         });
     });
 
     // Pengiraan Peratusan
-    const guruAchievedPct = guruTotal > 0 ? ((guruAchieved / guruTotal) * 100).toFixed(1) : 0;
-    const guruNotAchievedPct = guruTotal > 0 ? ((guruNotAchieved / guruTotal) * 100).toFixed(1) : 0;
+    const guruAchievedPct = guruTotal > 0 ? ((guruAchieved / guruTotal) * 100).toFixed(1) : '0.0';
+    const guruNotAchievedPct = guruTotal > 0 ? ((guruNotAchieved / guruTotal) * 100).toFixed(1) : '0.0';
 
-    const akpAchievedPct = akpTotal > 0 ? ((akpAchieved / akpTotal) * 100).toFixed(1) : 0;
-    const akpNotAchievedPct = akpTotal > 0 ? ((akpNotAchieved / akpTotal) * 100).toFixed(1) : 0;
+    const akpAchievedPct = akpTotal > 0 ? ((akpAchieved / akpTotal) * 100).toFixed(1) : '0.0';
+    const akpNotAchievedPct = akpTotal > 0 ? ((akpNotAchieved / akpTotal) * 100).toFixed(1) : '0.0';
 
     // Kemaskini Kad GURU
     document.getElementById('guruTotal').innerText = guruTotal;
@@ -104,7 +110,7 @@ function processHRMISData(data) {
     document.getElementById('akpNotAchieved').innerText = akpNotAchieved;
     document.getElementById('akpNotAchievedPct').innerText = `${akpNotAchievedPct}% belum mencapai`;
 
-    // Render Jadual & Carta
+    // Papar Jadual & Carta
     renderTable(allStaffData);
     renderCharts(guruAchieved, guruNotAchieved, akpAchieved, akpNotAchieved);
 }
@@ -172,7 +178,7 @@ function renderCharts(guruAchieved, guruNotAchieved, akpAchieved, akpNotAchieved
                         label: function(context) {
                             let total = context.dataset.data.reduce((a, b) => a + b, 0);
                             let value = context.raw;
-                            let percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            let percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
                             return ` ${context.label}: ${value} orang (${percentage}%)`;
                         }
                     }
@@ -205,7 +211,7 @@ function renderCharts(guruAchieved, guruNotAchieved, akpAchieved, akpNotAchieved
                         label: function(context) {
                             let total = context.dataset.data.reduce((a, b) => a + b, 0);
                             let value = context.raw;
-                            let percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            let percentage = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
                             return ` ${context.label}: ${value} orang (${percentage}%)`;
                         }
                     }
